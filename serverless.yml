@@ -25,6 +25,6 @@ plugins:
 custom:
     whitesource:
         pathToConfig: whitesource-fs-agent.config
-        pathToJar: wss-unified-agent-integration-802.jar
+        pathToJar: wss-unified-agent.jar
         wss-logLevel: debug
         wss-apiKey: 465d4d8873ea4a8fb982cf063c999bac45654261d45240d4810b91881f0e64ee
