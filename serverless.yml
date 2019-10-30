@@ -61,7 +61,7 @@ provider:
       'Fn::GetAtt':
         - PayrollElastiCacheClusterGroup
         - ConfigurationEndPoint.Port
-  vpc:
+vpc:
     securityGroupIds:
       - Ref: ServiceSecurityGroup
     subnetIds:
