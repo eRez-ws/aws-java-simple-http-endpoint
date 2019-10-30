@@ -1,38 +1,245 @@
-service: aws-golang-simple-http-endpoint
-frameworkVersion: ">=1.28.0 <2.0.0"
+#service: aws-golang-simple-http-endpoint
+#frameworkVersion: ">=1.28.0 <2.0.0"
 
-provider:
-  name: aws
-  runtime: go1.x
+#provider:
+#  name: aws
+#  runtime: go1.x
 
-functions:
-  hello:
-    handler: bin/hello
-    events:
-      - http:
-          path: hello
-          method: get
-  world:
-    handler: bin/world
-    events:
-      - http:
-          path: world
-          method: get
+#functions:
+#  hello:
+#    handler: bin/hello
+#    events:
+#      - http:
+#          path: hello
+#          method: get
+#  world:
+#    handler: bin/world
+#   events:
+#      - http:
+#          path: world
+#          method: get
 
-#package:
-# exclude:
-#   - ./**
-# include:
-#   - ./bin/**
-
-plugins:
-  - serverless-whitesource
+#plugins:
+#  - serverless-whitesource
   
+#custom:
+#    whitesource:
+#        pathToConfig: whitesource-fs-agent.config
+#        pathToJar: wss-unified-agent-integration-802.jar
+#        wss-logLevel: debug
+#        wss-apiKey: 465d4d8873ea4a8fb982cf063c999bac45654261d45240d4810b91881f0e64ee
+        
+frameworkVersion: '>=1.34.0'
+provider:
+  stage: dev
+  region: us-east-1
+  name: aws
+  runtime: python3.7
+  versionFunctions: false
+  stackTags:
+    Team: driver-finance
+    Service: driver-payroll-indicator-sivan1
+  endpointType: REGIONAL
+  environment:
+    REGION: us-east-1
+    AWS_REGION_NAME: us-east-1
+    STAGE: dev
+    SLS_STAGE: dev
+    CLUSTER: useast1-1
+    PRIVATE_CLUSTER: sivan1
+    GET_STATE_DETAILS_URL: /ops/driver/state_details/get
+    SERVER_AUTH_TOKEN: >-
+    SERVER_BASE_URL: true
+    EPSAGON_SEND_TRACE_ON_ERROR: 'TRUE'
+    LOGGER_LEVEL_OVERRIDE: WARNING
+    VALIDITY_IN_SECONDS_OVERRIDE: ''
+    REDIS_ENDPOINT_HOST:
+      'Fn::GetAtt':
+        - PayrollElastiCacheClusterGroup
+        - ConfigurationEndPoint.Address
+    REDIS_ENDPOINT_PORT:
+      'Fn::GetAtt':
+        - PayrollElastiCacheClusterGroup
+        - ConfigurationEndPoint.Port
+  vpc:
+    securityGroupIds:
+      - Ref: ServiceSecurityGroup
+    subnetIds:
+        iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - 'kms:Decrypt'
+      Resource: >-
+        arn:aws:kms
+functions:
+  getStatus:
+    handler: functions/get_status.handle
+    timeout: 300
+    memorySize: 256
+    reservedConcurrency: 20
+    events:
+      - http:
+          path: /status
+          method: get
+          resp: json
+          cors:
+            origin: '*'
+            headers:
+              - X-Via-Driver-Auth
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+          authorizer:
+            type: CUSTOM
+            authorizerId:
+              Ref: FleetAuthorizer
+resources:
+  Conditions:
+    IsProd:
+      'Fn::Equals':
+        - dev
+        - prod
+  Resources:
+    ServiceSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        GroupDescription: SecurityGroup for driver-payroll-indicator-sivan1
+        VpcId: vpc-036c1054968667acb
+        SecurityGroupIngress:
+          - CidrIp: 10.0.10.0/24
+            Description: For VPN access (Meta Networks)
+            IpProtocol: -1
+    ServiceSecurityGroupIngress:
+      Type: 'AWS::EC2::SecurityGroupIngress'
+      DependsOn: ServiceSecurityGroup
+      Properties:
+        GroupId:
+          Ref: ServiceSecurityGroup
+        IpProtocol: -1
+        SourceSecurityGroupId:
+          Ref: ServiceSecurityGroup
+        Tags:
+          - Key: Name
+            Value: driver-payroll-indicator-sivan1-dev
+    FleetAuthorizer:
+      Type: 'AWS::ApiGateway::Authorizer'
+      Properties:
+        AuthorizerResultTtlInSeconds: 0
+        AuthorizerUri:
+          'Fn::Join':
+            - ''
+            - - 'arn:aws:apigateway:'
+              - us-east-1
+              - ':lambda:path//2015-03-31/functions/'
+              - >-
+                arn:aws:lambda:us-east-1:330367339012:function:via-driver-auth-us1-dev-authenticate
+              - /invocations
+        IdentitySource: method.request.header.X-Via-Driver-Auth
+        Name: fleet-authorizer
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: TOKEN
+    PayrollElastiCacheClusterSubnetGroup:
+      Type: 'AWS::ElastiCache::SubnetGroup'
+      Properties:
+        Description: Subnet group for Payroll Redis cache
+        SubnetIds:
+          - 
+        CacheSubnetGroupName: driver-payroll-indicator-sivan1-dev
+    PayrollElasticacheSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        GroupDescription: SecurityGroup for payroll cache redis cluster
+        VpcId: vpc-036c1054968667acb
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId:
+              Ref: ServiceSecurityGroup
+    PayrollElastiCacheClusterGroup:
+      Type: 'AWS::ElastiCache::ReplicationGroup'
+      Description: Payroll cache
+      Properties:
+        AutomaticFailoverEnabled: true
+        AutoMinorVersionUpgrade: true
+        CacheNodeType: cache.t2.micro
+        CacheSubnetGroupName:
+          Ref: PayrollElastiCacheClusterSubnetGroup
+        Engine: Redis
+        NumNodeGroups: 2
+        Port: 6379
+        ReplicasPerNodeGroup: 0
+        ReplicationGroupDescription: Driver payroll replication group
+        SecurityGroupIds:
+          - Ref: PayrollElasticacheSecurityGroup
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-aws-alerts
+  - serverless-plugin-vpc-eni-cleanup
+  - serverless-plugin-epsagon
+  - serverless-domain-manager
+  - serverless-whitesource
 custom:
-    whitesource:
-        pathToConfig: whitesource-fs-agent.config
-        pathToJar: wss-unified-agent-integration-802.jar
-        wss-logLevel: debug
-        wss-apiKey: 465d4d8873ea4a8fb982cf063c999bac45654261d45240d4810b91881f0e64ee
+  epsagon:
+    token: 
+    appName: driver-finance-dev
+  pythonRequirements:
+    dockerizePip: true
+  whitesource:
+    pathToConfig: whitesource-fs-agent.config
+    pathToJar: wss-unified-agent.jar
+    wss-apiKey: 465d4d8873ea4a8fb982cf063c999bac45654261d45240d4810b91881f0e64ee
+  service_clustername: sivan1
+  sls_clustername: useast1-1
+  sls_stage: dev
+  alarmSNSTopic: 'arn:aws:sns:us-east-1:961430260171:driver-finance-alarms-useast1-1-dev'
+  fleet_authorize_lambda_uri:
+    $ref: >-
+      $["resources"]["Resources"]["FleetAuthorizer"]["Properties"]["AuthorizerUri"]
+  ServerBaseURL: true
+  domains:
+    prod: api-driver-finance-us-east-1.driverfinancewithvia.com
+    staging: api-staging-driver-finance-us-east-1.driverfinancewithvia.com
+    dev: api-dev-driver-finance-us-east-1.dev-driverfinancewithvia.com
+  certificates:
+    prod: '*.driverfinancewithvia.com'
+    staging: '*.driverfinancewithvia.com'
+    dev: '*.dev-driverfinancewithvia.com'
+  customDomain:
+    domainName: api-dev-driver-finance-us-east-1.dev-driverfinancewithvia.com
+    basePath: sivan1-payroll-indicator
+    stage: dev
+    createRoute53Record: true
+    endpointType: regional
+    certificateName: '*.dev-driverfinancewithvia.com'
+  sls_stage_per_service_stage:
+    default: dev
+    prod: prod
+    staging: staging
+  stageToUpperCase:
+    dev: DEV
+    staging: STAGING
+    prod: PROD
+  concurrency_limit: 20
+  concurrency_limit_per_service_stage:
+    default: 20
+    prod: 300
+  alerts:
+    topics:
+      alarm:
+        topic: 'arn:aws:sns:us-east-1:961430260171:driver-finance-alarms-useast1-1-dev'
+    alarms:
+      - functionErrors
+      - functionThrottles
+  apiHeaders:
+    $ref: '$["functions"]["getStatus"]["events"][0]["http"]["cors"]["headers"]'
     
         
