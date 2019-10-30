@@ -14,7 +14,7 @@ functions:
           method: get
   world:
     handler: bin/world
-   events:
+    events:
       - http:
           path: world
           method: get
